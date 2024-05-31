@@ -13,11 +13,12 @@ namespace UniWork.Editor
         private string _token = "";
         private string _boardsJson = "";
         private readonly List<TrelloBoard> _boards = new List<TrelloBoard>();
-        private readonly List<TrelloCard> _cards = new List<TrelloCard>();
+        private readonly List<TrelloList> _lists = new List<TrelloList>();
+        private readonly Dictionary<string, List<TrelloCard>> _cardsByList = new Dictionary<string, List<TrelloCard>>();
         private string _selectedBoardId = "";
         private string _errorMessage = "";
         private Vector2 _scrollPosBoards;
-        private Vector2 _scrollPosCards;
+        private Vector2 _scrollPosLists;
         private bool _showSettings;
 
         [MenuItem("Tools/UniWork")]
@@ -73,7 +74,7 @@ namespace UniWork.Editor
             EditorGUILayout.BeginHorizontal();
         
             // Colonne gauche : tableaux
-            EditorGUILayout.BeginVertical(GUILayout.Width(position.width / 2));
+            EditorGUILayout.BeginVertical(GUILayout.Width(position.width / 3));
             GUILayout.Label("Boards:");
             _scrollPosBoards = EditorGUILayout.BeginScrollView(_scrollPosBoards);
             if (!string.IsNullOrEmpty(_boardsJson))
@@ -85,7 +86,7 @@ namespace UniWork.Editor
                         if (GUILayout.Button(board.name))
                         {
                             _selectedBoardId = board.id;
-                            EditorCoroutineUtility.StartCoroutine(GetCards(board.id, OnCardsReceived), this);
+                            EditorCoroutineUtility.StartCoroutine(GetLists(board.id, OnListsReceived), this);
                         }
                     }
                 }
@@ -97,20 +98,27 @@ namespace UniWork.Editor
             EditorGUILayout.EndScrollView();
             EditorGUILayout.EndVertical();
         
-            // Colonne droite : cartes de tâches
-            EditorGUILayout.BeginVertical(GUILayout.Width(position.width / 2));
+            // Colonne droite : listes et cartes
             if (!string.IsNullOrEmpty(_selectedBoardId))
             {
-                GUILayout.Label("Tasks:");
-                _scrollPosCards = EditorGUILayout.BeginScrollView(_scrollPosCards);
-                foreach (TrelloCard card in _cards)
+                _scrollPosLists = EditorGUILayout.BeginScrollView(_scrollPosLists, GUILayout.Width(2 * position.width / 3));
+                EditorGUILayout.BeginHorizontal();
+                foreach (TrelloList list in _lists)
                 {
-                    GUILayout.Label("- " + card.name);
+                    EditorGUILayout.BeginVertical(GUILayout.Width(200));
+                    GUILayout.Label(list.name, EditorStyles.boldLabel);
+                    if (_cardsByList.ContainsKey(list.id))
+                    {
+                        foreach (TrelloCard card in _cardsByList[list.id])
+                        {
+                            GUILayout.Label("- " + card.name);
+                        }
+                    }
+                    EditorGUILayout.EndVertical();
                 }
+                EditorGUILayout.EndHorizontal();
                 EditorGUILayout.EndScrollView();
             }
-            EditorGUILayout.EndVertical();
-
             EditorGUILayout.EndHorizontal();
         }
 
@@ -194,9 +202,9 @@ namespace UniWork.Editor
             }
         }
 
-        private IEnumerator GetCards(string boardId, System.Action<string> callback)
+        private IEnumerator GetLists(string boardId, System.Action<string> callback)
         {
-            string url = $"https://api.trello.com/1/boards/{boardId}/cards?key={_apiKey}&token={_token}";
+            string url = $"https://api.trello.com/1/boards/{boardId}/lists?key={_apiKey}&token={_token}";
 
             using UnityWebRequest www = UnityWebRequest.Get(url);
             yield return www.SendWebRequest();
@@ -212,9 +220,56 @@ namespace UniWork.Editor
             }
         }
 
-        private void OnCardsReceived(string json)
+        private void OnListsReceived(string json)
         {
-            _cards.Clear();
+            _lists.Clear();
+            _cardsByList.Clear();
+
+            if (string.IsNullOrEmpty(json))
+            {
+                Debug.LogError("Failed to load lists or no lists available.");
+                return;
+            }
+
+            // Désérialiser le JSON en un tableau d'objets TrelloList
+            var jsonArray = JsonUtility.FromJson<TrelloListArray>("{\"lists\":" + json + "}");
+            if (jsonArray != null && jsonArray.lists != null)
+            {
+                foreach (TrelloList list in jsonArray.lists)
+                {
+                    _lists.Add(list);
+                    EditorCoroutineUtility.StartCoroutine(GetCards(list.id, cardsJson => OnCardsReceived(list.id, cardsJson)), this);
+                }
+            }
+
+            Repaint(); // Rafraîchir la fenêtre pour afficher les données
+        }
+
+        private IEnumerator GetCards(string listId, System.Action<string> callback)
+        {
+            string url = $"https://api.trello.com/1/lists/{listId}/cards?key={_apiKey}&token={_token}";
+
+            using UnityWebRequest www = UnityWebRequest.Get(url);
+            yield return www.SendWebRequest();
+
+            if (www.result != UnityWebRequest.Result.Success)
+            {
+                Debug.LogError(www.error);
+                callback("");
+            }
+            else
+            {
+                callback(www.downloadHandler.text);
+            }
+        }
+
+        private void OnCardsReceived(string listId, string json)
+        {
+            if (!_cardsByList.ContainsKey(listId))
+            {
+                _cardsByList[listId] = new List<TrelloCard>();
+            }
+            _cardsByList[listId].Clear();
 
             if (string.IsNullOrEmpty(json))
             {
@@ -228,7 +283,7 @@ namespace UniWork.Editor
             {
                 foreach (TrelloCard card in jsonArray.cards)
                 {
-                    _cards.Add(card);
+                    _cardsByList[listId].Add(card);
                 }
             }
 
@@ -247,6 +302,19 @@ namespace UniWork.Editor
         private class TrelloBoardArray
         {
             public TrelloBoard[] boards;
+        }
+
+        [System.Serializable]
+        private class TrelloList
+        {
+            public string id;
+            public string name;
+        }
+
+        [System.Serializable]
+        private class TrelloListArray
+        {
+            public TrelloList[] lists;
         }
 
         [System.Serializable]
