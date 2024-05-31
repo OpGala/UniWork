@@ -21,6 +21,9 @@ namespace UniWork.Editor
         private Vector2 _scrollPosLists;
         private bool _showSettings;
 
+        private TrelloCard _draggedCard;
+        private string _draggedCardListId;
+
         [MenuItem("Tools/UniWork")]
         public static void ShowWindow()
         {
@@ -29,13 +32,11 @@ namespace UniWork.Editor
 
         private void OnEnable()
         {
-            // Charger les clés API et token si elles sont sauvegardées
             _apiKey = EditorPrefs.GetString("UniWork_ApiKey", "");
             _token = EditorPrefs.GetString("UniWork_Token", "");
 
             if (!string.IsNullOrEmpty(_apiKey) && !string.IsNullOrEmpty(_token))
             {
-                // Si les clés sont présentes, récupérer les boards
                 EditorCoroutineUtility.StartCoroutine(GetBoards(OnBoardsReceived), this);
             }
             else
@@ -46,7 +47,6 @@ namespace UniWork.Editor
 
         private void OnDisable()
         {
-            // Sauvegarder les clés API et token
             EditorPrefs.SetString("UniWork_ApiKey", _apiKey);
             EditorPrefs.SetString("UniWork_Token", _token);
         }
@@ -70,7 +70,6 @@ namespace UniWork.Editor
                 DrawSettingsPopup();
             }
 
-            // Layout principal : deux colonnes
             EditorGUILayout.BeginHorizontal();
         
             // Colonne gauche : tableaux
@@ -81,7 +80,7 @@ namespace UniWork.Editor
             {
                 foreach (TrelloBoard board in _boards)
                 {
-                    if (!board.closed)  // Filtrer les tableaux archivés
+                    if (!board.closed)
                     {
                         if (GUILayout.Button(board.name))
                         {
@@ -111,8 +110,12 @@ namespace UniWork.Editor
                     {
                         foreach (TrelloCard card in _cardsByList[list.id])
                         {
-                            GUILayout.Label("- " + card.name);
+                            DrawCard(list.id, card);
                         }
+                    }
+                    if (GUILayout.Button("Add Card"))
+                    {
+                        AddNewCard(list.id);
                     }
                     EditorGUILayout.EndVertical();
                 }
@@ -120,6 +123,8 @@ namespace UniWork.Editor
                 EditorGUILayout.EndScrollView();
             }
             EditorGUILayout.EndHorizontal();
+
+            HandleDragAndDrop();
         }
 
         private void DrawSettingsPopup()
@@ -148,6 +153,67 @@ namespace UniWork.Editor
             }
 
             EditorGUILayout.EndVertical();
+        }
+
+        private void DrawCard(string listId, TrelloCard card)
+        {
+            Rect cardRect = EditorGUILayout.BeginVertical();
+            GUILayout.Label(card.name);
+            EditorGUILayout.EndVertical();
+
+            if (Event.current.type == EventType.MouseDown && cardRect.Contains(Event.current.mousePosition))
+            {
+                _draggedCard = card;
+                _draggedCardListId = listId;
+                Event.current.Use();
+            }
+        }
+
+        private void HandleDragAndDrop()
+        {
+            if (_draggedCard == null)
+            {
+                return;
+            }
+
+            GUI.Box(new Rect(Event.current.mousePosition.x, Event.current.mousePosition.y, 150, 30), _draggedCard.name, EditorStyles.helpBox);
+
+            if (Event.current.type == EventType.MouseUp)
+            {
+                foreach (TrelloList list in _lists)
+                {
+                    Rect listRect = new Rect(200 * _lists.IndexOf(list), 0, 200, position.height);
+                    if (listRect.Contains(Event.current.mousePosition))
+                    {
+                        MoveCardToList(_draggedCard, _draggedCardListId, list.id);
+                        break;
+                    }
+                }
+                _draggedCard = null;
+                _draggedCardListId = null;
+                Event.current.Use();
+            }
+            Repaint();
+        }
+
+        private void MoveCardToList(TrelloCard card, string oldListId, string newListId)
+        {
+            if (oldListId == newListId)
+            {
+                return;
+            }
+
+            _cardsByList[oldListId].Remove(card);
+            _cardsByList[newListId].Add(card);
+
+            // Mettre à jour Trello
+            EditorCoroutineUtility.StartCoroutine(UpdateCardList(card.id, newListId), this);
+        }
+
+        private void AddNewCard(string listId)
+        {
+            string cardName = "New Card";  // Vous pouvez ajouter une interface pour entrer le nom de la carte
+            EditorCoroutineUtility.StartCoroutine(CreateCard(listId, cardName, OnCardCreated), this);
         }
 
         private IEnumerator GetBoards(System.Action<string> callback)
@@ -179,7 +245,7 @@ namespace UniWork.Editor
             }
 
             ParseBoardsJson();
-            Repaint(); // Rafraîchir la fenêtre pour afficher les données
+            Repaint();
         }
 
         private void ParseBoardsJson()
@@ -191,7 +257,6 @@ namespace UniWork.Editor
                 return;
             }
 
-            // Désérialiser le JSON en un tableau d'objets TrelloBoard
             var jsonArray = JsonUtility.FromJson<TrelloBoardArray>("{\"boards\":" + _boardsJson + "}");
             if (jsonArray != null && jsonArray.boards != null)
             {
@@ -231,7 +296,6 @@ namespace UniWork.Editor
                 return;
             }
 
-            // Désérialiser le JSON en un tableau d'objets TrelloList
             var jsonArray = JsonUtility.FromJson<TrelloListArray>("{\"lists\":" + json + "}");
             if (jsonArray != null && jsonArray.lists != null)
             {
@@ -242,7 +306,7 @@ namespace UniWork.Editor
                 }
             }
 
-            Repaint(); // Rafraîchir la fenêtre pour afficher les données
+            Repaint();
         }
 
         private IEnumerator GetCards(string listId, System.Action<string> callback)
@@ -277,7 +341,6 @@ namespace UniWork.Editor
                 return;
             }
 
-            // Désérialiser le JSON en un tableau d'objets TrelloCard
             var jsonArray = JsonUtility.FromJson<TrelloCardArray>("{\"cards\":" + json + "}");
             if (jsonArray != null && jsonArray.cards != null)
             {
@@ -287,7 +350,57 @@ namespace UniWork.Editor
                 }
             }
 
-            Repaint(); // Rafraîchir la fenêtre pour afficher les données
+            Repaint();
+        }
+
+        private IEnumerator UpdateCardList(string cardId, string newListId)
+        {
+            string url = $"https://api.trello.com/1/cards/{cardId}?idList={newListId}&key={_apiKey}&token={_token}";
+            using UnityWebRequest www = UnityWebRequest.Put(url, "");
+            yield return www.SendWebRequest();
+
+            if (www.result != UnityWebRequest.Result.Success)
+            {
+                Debug.LogError(www.error);
+            }
+        }
+
+        private IEnumerator CreateCard(string listId, string cardName, System.Action<string> callback)
+        {
+            string url = $"https://api.trello.com/1/cards?idList={listId}&name={cardName}&key={_apiKey}&token={_token}";
+            using UnityWebRequest www = UnityWebRequest.PostWwwForm(url, "");
+            yield return www.SendWebRequest();
+
+            if (www.result != UnityWebRequest.Result.Success)
+            {
+                Debug.LogError(www.error);
+                callback("");
+            }
+            else
+            {
+                callback(www.downloadHandler.text);
+            }
+        }
+
+        private void OnCardCreated(string json)
+        {
+            if (string.IsNullOrEmpty(json))
+            {
+                Debug.LogError("Failed to create card.");
+                return;
+            }
+
+            var card = JsonUtility.FromJson<TrelloCard>(json);
+            if (card != null)
+            {
+                if (!_cardsByList.ContainsKey(card.idList))
+                {
+                    _cardsByList[card.idList] = new List<TrelloCard>();
+                }
+                _cardsByList[card.idList].Add(card);
+
+                Repaint();
+            }
         }
 
         [System.Serializable]
@@ -321,6 +434,7 @@ namespace UniWork.Editor
         private class TrelloCard
         {
             public string id;
+            public string idList;
             public string name;
         }
 
