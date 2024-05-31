@@ -23,7 +23,6 @@ namespace UniWork.Editor
 
         private TrelloCard _draggedCard;
         private string _draggedCardListId;
-        private TrelloCard _selectedCard;
 
         [MenuItem("Tools/UniWork")]
         public static void ShowWindow()
@@ -125,11 +124,6 @@ namespace UniWork.Editor
             }
             EditorGUILayout.EndHorizontal();
 
-            if (_selectedCard != null)
-            {
-                DrawCardDetails();
-            }
-
             HandleDragAndDrop();
         }
 
@@ -166,7 +160,7 @@ namespace UniWork.Editor
             Rect cardRect = EditorGUILayout.BeginVertical();
             if (GUILayout.Button(card.name))
             {
-                _selectedCard = card;
+                CardDetailsWindow.ShowWindow(card, _apiKey, _token);
             }
             EditorGUILayout.EndVertical();
 
@@ -176,57 +170,6 @@ namespace UniWork.Editor
                 _draggedCardListId = listId;
                 Event.current.Use();
             }
-        }
-
-        private void DrawCardDetails()
-        {
-            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
-            GUILayout.Label("Card Details", EditorStyles.boldLabel);
-            GUILayout.Label("Name:");
-            _selectedCard.name = EditorGUILayout.TextField(_selectedCard.name);
-
-            if (GUILayout.Button("Save"))
-            {
-                EditorCoroutineUtility.StartCoroutine(UpdateCardDetails(_selectedCard), this);
-                _selectedCard = null;
-            }
-
-            if (GUILayout.Button("Close"))
-            {
-                _selectedCard = null;
-            }
-
-            GUILayout.Label("Attachments:");
-            foreach (var attachment in _selectedCard.attachments)
-            {
-                GUILayout.Label(attachment.name);
-            }
-            if (GUILayout.Button("Add Attachment"))
-            {
-                // Code pour ajouter une pièce jointe
-            }
-
-            GUILayout.Label("Comments:");
-            foreach (var comment in _selectedCard.comments)
-            {
-                GUILayout.Label(comment.text);
-            }
-            if (GUILayout.Button("Add Comment"))
-            {
-                // Code pour ajouter un commentaire
-            }
-
-            GUILayout.Label("Labels:");
-            foreach (var label in _selectedCard.labels)
-            {
-                GUILayout.Label(label.name);
-            }
-            if (GUILayout.Button("Add Label"))
-            {
-                // Code pour ajouter une étiquette
-            }
-
-            EditorGUILayout.EndVertical();
         }
 
         private void HandleDragAndDrop()
@@ -462,18 +405,6 @@ namespace UniWork.Editor
             }
         }
 
-        private IEnumerator UpdateCardDetails(TrelloCard card)
-        {
-            string url = $"https://api.trello.com/1/cards/{card.id}?name={card.name}&key={_apiKey}&token={_token}";
-            using UnityWebRequest www = UnityWebRequest.Put(url, "");
-            yield return www.SendWebRequest();
-
-            if (www.result != UnityWebRequest.Result.Success)
-            {
-                Debug.LogError(www.error);
-            }
-        }
-
         [System.Serializable]
         private class TrelloBoard
         {
@@ -502,15 +433,17 @@ namespace UniWork.Editor
         }
 
         [System.Serializable]
-        private class TrelloCard
+        public class TrelloCard
         {
             public string id;
             public string idList;
             public string name;
+            public string desc;
             public List<TrelloAttachment> attachments;
             public List<TrelloComment> comments;
             public List<TrelloLabel> labels;
         }
+
 
         [System.Serializable]
         private class TrelloCardArray
@@ -519,7 +452,7 @@ namespace UniWork.Editor
         }
 
         [System.Serializable]
-        private class TrelloAttachment
+        public class TrelloAttachment
         {
             public string id;
             public string name;
@@ -527,17 +460,103 @@ namespace UniWork.Editor
         }
 
         [System.Serializable]
-        private class TrelloComment
+        public class TrelloComment
         {
             public string id;
             public string text;
         }
 
         [System.Serializable]
-        private class TrelloLabel
+        public class TrelloLabel
         {
             public string id;
             public string name;
+        }
+    }
+
+    public sealed class CardDetailsWindow : EditorWindow
+    {
+        private UniWork.TrelloCard _card;
+        private string _apiKey;
+        private string _token;
+
+        public static void ShowWindow(UniWork.TrelloCard card, string apiKey, string token)
+        {
+            CardDetailsWindow window = GetWindow<CardDetailsWindow>("Card Details");
+            window._card = card;
+            window._apiKey = apiKey;
+            window._token = token;
+        }
+
+        private void OnGUI()
+        {
+            if (_card == null)
+            {
+                Close();
+                return;
+            }
+
+            GUILayout.Label("Card Details", EditorStyles.boldLabel);
+            GUILayout.Label("Name:");
+            _card.name = EditorGUILayout.TextField(_card.name);
+
+            GUILayout.Label("Description:");
+            _card.desc = EditorGUILayout.TextArea(_card.desc, GUILayout.Height(100)); // Ajouter cette ligne
+
+            if (GUILayout.Button("Save"))
+            {
+                EditorCoroutineUtility.StartCoroutine(UpdateCardDetails(_card), this);
+                _card = null;
+                Close();
+            }
+
+            if (GUILayout.Button("Close"))
+            {
+                _card = null;
+                Close();
+            }
+
+            GUILayout.Label("Attachments:");
+            foreach (var attachment in _card.attachments)
+            {
+                GUILayout.Label(attachment.name);
+            }
+            if (GUILayout.Button("Add Attachment"))
+            {
+                // Code pour ajouter une pièce jointe
+            }
+
+            GUILayout.Label("Comments:");
+            foreach (var comment in _card.comments)
+            {
+                GUILayout.Label(comment.text);
+            }
+            if (GUILayout.Button("Add Comment"))
+            {
+                // Code pour ajouter un commentaire
+            }
+
+            GUILayout.Label("Labels:");
+            foreach (var label in _card.labels)
+            {
+                GUILayout.Label(label.name);
+            }
+            if (GUILayout.Button("Add Label"))
+            {
+                // Code pour ajouter une étiquette
+            }
+        }
+
+        private IEnumerator UpdateCardDetails(UniWork.TrelloCard card)
+        {
+            string url = $"https://api.trello.com/1/cards/{card.id}?name={card.name}&desc={UnityWebRequest.EscapeURL(card.desc)}&key={_apiKey}&token={_token}";
+            using UnityWebRequest www = UnityWebRequest.Put(url, "");
+            yield return www.SendWebRequest();
+
+            if (www.result != UnityWebRequest.Result.Success)
+            {
+                Debug.LogError(www.error);
+            }
         }
     }
 }
