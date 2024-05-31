@@ -23,6 +23,7 @@ namespace UniWork.Editor
 
         private TrelloCard _draggedCard;
         private string _draggedCardListId;
+        private TrelloCard _selectedCard;
 
         [MenuItem("Tools/UniWork")]
         public static void ShowWindow()
@@ -124,6 +125,11 @@ namespace UniWork.Editor
             }
             EditorGUILayout.EndHorizontal();
 
+            if (_selectedCard != null)
+            {
+                DrawCardDetails();
+            }
+
             HandleDragAndDrop();
         }
 
@@ -158,7 +164,10 @@ namespace UniWork.Editor
         private void DrawCard(string listId, TrelloCard card)
         {
             Rect cardRect = EditorGUILayout.BeginVertical();
-            GUILayout.Label(card.name);
+            if (GUILayout.Button(card.name))
+            {
+                _selectedCard = card;
+            }
             EditorGUILayout.EndVertical();
 
             if (Event.current.type == EventType.MouseDown && cardRect.Contains(Event.current.mousePosition))
@@ -167,6 +176,57 @@ namespace UniWork.Editor
                 _draggedCardListId = listId;
                 Event.current.Use();
             }
+        }
+
+        private void DrawCardDetails()
+        {
+            EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+            GUILayout.Label("Card Details", EditorStyles.boldLabel);
+            GUILayout.Label("Name:");
+            _selectedCard.name = EditorGUILayout.TextField(_selectedCard.name);
+
+            if (GUILayout.Button("Save"))
+            {
+                EditorCoroutineUtility.StartCoroutine(UpdateCardDetails(_selectedCard), this);
+                _selectedCard = null;
+            }
+
+            if (GUILayout.Button("Close"))
+            {
+                _selectedCard = null;
+            }
+
+            GUILayout.Label("Attachments:");
+            foreach (var attachment in _selectedCard.attachments)
+            {
+                GUILayout.Label(attachment.name);
+            }
+            if (GUILayout.Button("Add Attachment"))
+            {
+                // Code pour ajouter une pièce jointe
+            }
+
+            GUILayout.Label("Comments:");
+            foreach (var comment in _selectedCard.comments)
+            {
+                GUILayout.Label(comment.text);
+            }
+            if (GUILayout.Button("Add Comment"))
+            {
+                // Code pour ajouter un commentaire
+            }
+
+            GUILayout.Label("Labels:");
+            foreach (var label in _selectedCard.labels)
+            {
+                GUILayout.Label(label.name);
+            }
+            if (GUILayout.Button("Add Label"))
+            {
+                // Code pour ajouter une étiquette
+            }
+
+            EditorGUILayout.EndVertical();
         }
 
         private void HandleDragAndDrop()
@@ -206,7 +266,6 @@ namespace UniWork.Editor
             _cardsByList[oldListId].Remove(card);
             _cardsByList[newListId].Add(card);
 
-            // Mettre à jour Trello
             EditorCoroutineUtility.StartCoroutine(UpdateCardList(card.id, newListId), this);
         }
 
@@ -403,6 +462,18 @@ namespace UniWork.Editor
             }
         }
 
+        private IEnumerator UpdateCardDetails(TrelloCard card)
+        {
+            string url = $"https://api.trello.com/1/cards/{card.id}?name={card.name}&key={_apiKey}&token={_token}";
+            using UnityWebRequest www = UnityWebRequest.Put(url, "");
+            yield return www.SendWebRequest();
+
+            if (www.result != UnityWebRequest.Result.Success)
+            {
+                Debug.LogError(www.error);
+            }
+        }
+
         [System.Serializable]
         private class TrelloBoard
         {
@@ -436,12 +507,37 @@ namespace UniWork.Editor
             public string id;
             public string idList;
             public string name;
+            public List<TrelloAttachment> attachments;
+            public List<TrelloComment> comments;
+            public List<TrelloLabel> labels;
         }
 
         [System.Serializable]
         private class TrelloCardArray
         {
             public TrelloCard[] cards;
+        }
+
+        [System.Serializable]
+        private class TrelloAttachment
+        {
+            public string id;
+            public string name;
+            public string url;
+        }
+
+        [System.Serializable]
+        private class TrelloComment
+        {
+            public string id;
+            public string text;
+        }
+
+        [System.Serializable]
+        private class TrelloLabel
+        {
+            public string id;
+            public string name;
         }
     }
 }
